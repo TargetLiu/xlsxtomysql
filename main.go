@@ -17,13 +17,30 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-var (
-	db      *sql.DB
+//列
+type columns struct {
+	xlsxColumns  []*xlsx.Cell
+	tableColumns []string
+	useColumns   [][]string
+}
+
+//行
+type row struct {
+	insertID int64
+	sql      string
+	value    map[string]string
+	ot       *otherTable
+}
+
+//附表
+type otherTable struct {
+	sql     string
+	value   []string
 	columns []string
-	err     error
-)
+}
 
 func main() {
+	c := new(columns)
 	if len(os.Args) != 4 {
 		fmt.Println("请按照格式输入：xlsxtomysql [DSN] [数据库名称] [*.xlsx]")
 		os.Exit(-1)
@@ -33,17 +50,16 @@ func main() {
 	tableName := os.Args[2]
 	fileName := os.Args[3]
 
-	db, err = sql.Open("mysql", dsn)
+	db, err := sql.Open("mysql", dsn)
 	checkerr(err)
+	defer db.Close()
 	db.SetMaxOpenConns(2000)
 	db.SetMaxIdleConns(1000)
-	defer db.Close()
 
-	rows, err := db.Query(`SELECT * FROM ` + tableName)
+	rows, err := db.Query("SELECT * FROM " + tableName + " LIMIT 1")
 	checkerr(err)
-
 	//获取数据表字段名
-	columns, err = rows.Columns()
+	c.tableColumns, err = rows.Columns()
 	checkerr(err)
 	rows.Close()
 
@@ -52,152 +68,162 @@ func main() {
 		checkerr(err)
 	}
 
-	usecolumns := make([]string, len(xlFile.Sheets[0].Rows[0].Cells))
+	c.xlsxColumns = xlFile.Sheets[0].Rows[0].Cells
 
-	//对比Excel与数据表中字段
-	for i := 0; i < len(xlFile.Sheets[0].Rows[0].Cells); i++ {
-		thiscolumn, _ := xlFile.Sheets[0].Rows[0].Cells[i].String()
-		xlsxcolumn := strings.Split(thiscolumn, "|")
-		if xlsxcolumn[0] == ":other" {
-			usecolumns[i] = ":other"
-		} else {
-			for _, value := range columns {
-				if xlsxcolumn[0] == value {
-					usecolumns[i] = value
-				}
-			}
-		}
-	}
-
-	if len(usecolumns) < 1 {
-		fmt.Println("数据表与xlsx表格不对应")
-		os.Exit(-1)
-	}
+	c.paraseColumns()
 
 	ch := make(chan string)
+	rowsnum := len(xlFile.Sheets[0].Rows)
+	for i := 1; i < rowsnum; i++ {
+		go func(c *columns, i int, db *sql.DB, ch chan string) {
 
-	for i := 1; i < len(xlFile.Sheets[0].Rows); i++ {
-		go func(usecolumns []string, i int, db *sql.DB, ch chan string) {
-			insertvalue := make(map[string]string)
-			insertsql := `INSERT INTO ` + tableName + ` SET `
+			r := &row{value: make(map[string]string), sql: "INSERT INTO `" + tableName + "` SET ", ot: new(otherTable)}
 			tmp := 0
-			var ot []string
-			var othercolumns []string
-			for key, value := range usecolumns {
-				insertvalue[value], _ = xlFile.Sheets[0].Rows[i].Cells[key].String()
-				thiscolumn, _ := xlFile.Sheets[0].Rows[0].Cells[key].String()
-				xlsxcolumn := strings.Split(thiscolumn, "|")
+			for key, value := range c.useColumns {
+				r.value[value[0]], _ = xlFile.Sheets[0].Rows[i].Cells[key].String()
 
 				//解析内容
-				if xlsxcolumn[0] == ":other" {
-					ot = strings.Split(insertvalue[value], "|")
-					rows, err := db.Query("SELECT * FROM " + ot[0])
+				if value[0] == ":other" {
+					r.ot.value = strings.Split(r.value[value[0]], "|")
+					rows, err := db.Query("SELECT * FROM " + r.ot.value[0])
 					checkerr(err)
-					othercolumns, err = rows.Columns()
+					r.ot.columns, err = rows.Columns()
 					rows.Close()
 					checkerr(err)
 				} else {
-					if len(xlsxcolumn) > 1 {
-						switch xlsxcolumn[1] {
+					if len(value) > 1 {
+						switch value[1] {
 						case "unique":
-							result, _ := fetchRow(db, `SELECT count(`+xlsxcolumn[0]+`) as has FROM `+tableName+` WHERE `+xlsxcolumn[0]+` = '`+insertvalue[value]+`'`)
+							result, _ := fetchRow(db, "SELECT count("+value[0]+") as has FROM `"+tableName+"` WHERE `"+value[0]+"` = '"+r.value[value[0]]+"'")
 							has, _ := strconv.Atoi((*result)["has"])
 							if has > 0 {
-								fmt.Println(xlsxcolumn[0] + ":" + insertvalue[value] + "重复，自动跳过")
+								fmt.Print(value[0] + ":" + r.value[value[0]] + "重复，自动跳过")
 								ch <- "error"
 								return
 							}
 						case "password":
-							tmpvalue := strings.Split(insertvalue[value], "|")
+							tmpvalue := strings.Split(r.value[value[0]], "|")
 							if len(tmpvalue) == 2 {
 								if []byte(tmpvalue[1])[0] == ':' {
-									if _, ok := insertvalue[string([]byte(tmpvalue[1])[1:])]; ok {
-										insertvalue[value] = tmpvalue[0] + insertvalue[string([]byte(tmpvalue[1])[1:])]
+									if _, ok := r.value[string([]byte(tmpvalue[1])[1:])]; ok {
+										r.value[value[0]] = tmpvalue[0] + r.value[string([]byte(tmpvalue[1])[1:])]
 									} else {
-										fmt.Println("密码盐" + string([]byte(tmpvalue[1])[1:]) + "字段不存在，自动跳过")
+										fmt.Print("密码盐" + string([]byte(tmpvalue[1])[1:]) + "字段不存在，自动跳过")
 										ch <- "error"
 										return
 									}
 								} else {
-									insertvalue[value] += tmpvalue[1]
+									r.value[value[0]] += tmpvalue[1]
 								}
 							} else {
-								insertvalue[value] = tmpvalue[0]
+								r.value[value[0]] = tmpvalue[0]
 							}
-							switch xlsxcolumn[2] {
+							switch value[2] {
 							case "md5":
-								insertvalue[value] = string(md5.New().Sum([]byte(insertvalue[value])))
+								r.value[value[0]] = string(md5.New().Sum([]byte(r.value[value[0]])))
 							case "bcrypt":
-								pass, _ := bcrypt.GenerateFromPassword([]byte(insertvalue[value]), 13)
-								insertvalue[value] = string(pass)
+								pass, _ := bcrypt.GenerateFromPassword([]byte(r.value[value[0]]), 13)
+								r.value[value[0]] = string(pass)
 							}
 						case "find":
-							result, _ := fetchRow(db, `SELECT `+xlsxcolumn[3]+` FROM `+xlsxcolumn[2]+` WHERE `+xlsxcolumn[4]+` = '`+insertvalue[value]+`'`)
+							result, _ := fetchRow(db, "SELECT `"+value[3]+"` FROM `"+value[2]+"` WHERE "+value[4]+" = '"+r.value[value[0]]+"'")
 							if (*result)["id"] == "" {
-								fmt.Println("表 " + xlsxcolumn[2] + " 中没有找到 " + xlsxcolumn[4] + " 为 " + insertvalue[value] + " 的数据，自动跳过")
+								fmt.Print("表 " + value[2] + " 中没有找到 " + value[4] + " 为 " + r.value[value[0]] + " 的数据，自动跳过")
 								ch <- "error"
 								return
 							}
-							insertvalue[value] = (*result)["id"]
+							r.value[value[0]] = (*result)["id"]
 
 						}
 					}
-					insertvalue[value] = getVal(insertvalue[value])
+					r.value[value[0]] = paraseValue(r.value[value[0]])
 
-					if tmp == 0 {
-						insertsql += value + ` = '` + insertvalue[value] + `'`
-					} else {
-						insertsql += `, ` + value + ` = '` + insertvalue[value] + `'`
+					if r.value[value[0]] != "" {
+						if tmp == 0 {
+							r.sql += "`" + value[0] + "` = '" + r.value[value[0]] + "'"
+						} else {
+							r.sql += ", `" + value[0] + "` = '" + r.value[value[0]] + "'"
+						}
+						tmp++
 					}
-					tmp++
 
 				}
 			}
 
-			smt, err := db.Prepare(insertsql + `;`)
+			smt, err := db.Prepare(r.sql + ";")
 			defer smt.Close()
 			checkerr(err)
 
+			res, err := smt.Exec()
+			r.insertID, _ = res.LastInsertId()
+			checkerr(err)
+
 			//执行附表操作
-			if len(ot) > 0 {
-				res, err := smt.Exec()
-				id, _ := res.LastInsertId()
-
-				otinsertsql := `INSERT INTO ` + ot[0] + ` SET `
-				for i := 0; i < len(othercolumns); i++ {
-					ot[i+1] = getVal(ot[i+1])
-					if ot[i+1] == ":id" {
-						ot[i+1] = strconv.Itoa(int(id))
+			if r.ot != nil {
+				r.ot.sql = "INSERT INTO `" + r.ot.value[0] + "` SET "
+				tmp = 0
+				for key, value := range r.ot.columns {
+					r.ot.value[key+1] = paraseValue(r.ot.value[key+1])
+					if r.ot.value[key+1] == ":id" {
+						r.ot.value[key+1] = strconv.Itoa(int(r.insertID))
 					}
-					if i == 0 {
-						otinsertsql += othercolumns[i] + ` = '` + ot[i+1] + `'`
-					} else {
-						otinsertsql += `, ` + othercolumns[i] + ` = '` + ot[i+1] + `'`
+					if r.ot.value[key+1] != "" {
+						if tmp == 0 {
+							r.ot.sql += "`" + value + "` = '" + r.ot.value[key+1] + "'"
+						} else {
+							r.ot.sql += ", `" + value + "` = '" + r.ot.value[key+1] + "'"
 
+						}
+						tmp++
 					}
 				}
-				otsmt, err := db.Prepare(otinsertsql + `;`)
-				defer otsmt.Close()
+				otsmt, err := db.Prepare(r.ot.sql + ";")
 				checkerr(err)
+				defer otsmt.Close()
 				_, err = otsmt.Exec()
 				checkerr(err)
-			} else {
-				_, err = smt.Exec()
 			}
-			checkerr(err)
 			ch <- "success"
-		}(usecolumns, i, db, ch)
+		}(c, i, db, ch)
 	}
 
-	for i := 1; i < len(xlFile.Sheets[0].Rows); i++ {
-		<-ch
+	for i := 1; i < rowsnum; i++ {
+		if <-ch == "success" {
+			fmt.Println("[" + strconv.Itoa(i) + "/" + strconv.Itoa(rowsnum-1) + "]导入数据成功")
+		} else {
+			fmt.Print("[" + strconv.Itoa(i) + "/" + strconv.Itoa(rowsnum-1) + "]\n")
+		}
 	}
 
 }
 
+//解析Excel及数据库字段
+func (c *columns) paraseColumns() {
+	c.useColumns = make([][]string, len(c.xlsxColumns))
+	for key, value := range c.xlsxColumns {
+		thiscolumn, _ := value.String()
+		columnval := strings.Split(thiscolumn, "|")
+		if columnval[0] == ":other" {
+			c.useColumns[key] = columnval
+		} else {
+			for _, value := range c.tableColumns {
+				if columnval[0] == value {
+					c.useColumns[key] = columnval
+				}
+			}
+		}
+	}
+	if len(c.useColumns) < 1 {
+		fmt.Println("数据表与xlsx表格不对应")
+		os.Exit(-1)
+	}
+}
+
 //解析内容
-func getVal(val string) string {
+func paraseValue(val string) string {
 	switch val {
+	case ":null":
+		return ""
 	case ":time":
 		return strconv.Itoa(int(time.Now().Unix()))
 	case ":random":

@@ -38,7 +38,7 @@
 
 ## Excel截图
 
-![Excel截图](https://github.com/TargetLiu/xlsxtomysql/screenshot.jpg)
+![Excel截图](https://github.com/TargetLiu/xlsxtomysql/blob/master/screenshot.jpg)
 
 ## 关于作者
 

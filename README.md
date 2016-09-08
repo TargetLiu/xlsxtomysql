@@ -10,6 +10,20 @@
 
 2. 使用命令： `xlsxtomysql [DSN] [数据表名称] [*.xlsx]`
 
+## DSN
+
+格式：
+
+```
+[username[:password]@][protocol[(address)]]/dbname[?param1=value1&...&paramN=valueN]
+```
+
+示例：
+
+```
+root:123@tcp(127.0.0.1:3306)/dbname
+```
+
 ## Excel表导入结构说明
 
 1. 只支持单Sheet
@@ -43,4 +57,5 @@
 ## 关于作者
 
 我的博客：[http://targetliu.com/](http://targetliu.com/)
+
 GitHub：[https://github.com/TargetLiu](https://github.com/TargetLiu)

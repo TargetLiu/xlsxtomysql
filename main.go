@@ -42,6 +42,7 @@ func main() {
 	rows, err := db.Query(`SELECT * FROM ` + tableName)
 	checkerr(err)
 
+	//获取数据表字段名
 	columns, err = rows.Columns()
 	checkerr(err)
 	rows.Close()
@@ -53,6 +54,7 @@ func main() {
 
 	usecolumns := make([]string, len(xlFile.Sheets[0].Rows[0].Cells))
 
+	//对比Excel与数据表中字段
 	for i := 0; i < len(xlFile.Sheets[0].Rows[0].Cells); i++ {
 		thiscolumn, _ := xlFile.Sheets[0].Rows[0].Cells[i].String()
 		xlsxcolumn := strings.Split(thiscolumn, "|")
@@ -86,6 +88,7 @@ func main() {
 				thiscolumn, _ := xlFile.Sheets[0].Rows[0].Cells[key].String()
 				xlsxcolumn := strings.Split(thiscolumn, "|")
 
+				//解析内容
 				if xlsxcolumn[0] == ":other" {
 					ot = strings.Split(insertvalue[value], "|")
 					rows, err := db.Query("SELECT * FROM " + ot[0])
@@ -154,6 +157,8 @@ func main() {
 			smt, err := db.Prepare(insertsql + `;`)
 			defer smt.Close()
 			checkerr(err)
+
+			//执行附表操作
 			if len(ot) > 0 {
 				res, err := smt.Exec()
 				id, _ := res.LastInsertId()
@@ -190,6 +195,7 @@ func main() {
 
 }
 
+//解析内容
 func getVal(val string) string {
 	switch val {
 	case ":time":
@@ -201,6 +207,7 @@ func getVal(val string) string {
 	}
 }
 
+//按长度截取字符串
 func substr(str string, start int, length int) string {
 	rs := []rune(str)
 	rl := len(rs)

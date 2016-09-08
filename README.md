@@ -1,5 +1,3 @@
-> GitHub地址：[https://github.com/TargetLiu/xlsxtomysql](https://github.com/TargetLiu/xlsxtomysql)
-
 # Excel(xlsx)导入MySQL数据库
 
 ## 简介
@@ -45,3 +43,4 @@
 ## 关于作者
 
 我的博客：[http://targetliu.com/](http://targetliu.com/)
+GitHub：[https://github.com/TargetLiu](https://github.com/TargetLiu)

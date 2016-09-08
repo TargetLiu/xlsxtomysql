@@ -6,7 +6,7 @@
 
 ## 使用方法
 
-1. 使用Go编译
+1. 使用Go编译安装或直接下载：[https://github.com/TargetLiu/xlsxtomysql/releases](https://github.com/TargetLiu/xlsxtomysql/releases)
 
 2. 使用命令： `xlsxtomysql [DSN] [数据表名称] [*.xlsx]`
 

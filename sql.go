@@ -2,31 +2,21 @@ package main
 
 import (
 	"database/sql"
-	"log"
 
 	_ "github.com/go-sql-driver/mysql"
 )
 
 func fetchRow(db *sql.DB, sqlstr string, args ...interface{}) (*map[string]string, error) {
 	stmtOut, err := db.Prepare(sqlstr)
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
+	checkerr(err)
 	defer stmtOut.Close()
 
 	rows, err := stmtOut.Query(args...)
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
+	checkerr(err)
 	defer rows.Close()
 
 	columns, err := rows.Columns()
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
+	checkerr(err)
 
 	values := make([]sql.RawBytes, len(columns))
 	scanArgs := make([]interface{}, len(values))
@@ -38,10 +28,7 @@ func fetchRow(db *sql.DB, sqlstr string, args ...interface{}) (*map[string]strin
 
 	for rows.Next() {
 		err = rows.Scan(scanArgs...)
-		if err != nil {
-			log.Println(err)
-			return nil, err
-		}
+		checkerr(err)
 		var value string
 
 		for i, col := range values {
@@ -59,24 +46,15 @@ func fetchRow(db *sql.DB, sqlstr string, args ...interface{}) (*map[string]strin
 
 func fetchRows(db *sql.DB, sqlstr string, args ...interface{}) (*[]map[string]string, error) {
 	stmtOut, err := db.Prepare(sqlstr)
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
+	checkerr(err)
 	defer stmtOut.Close()
 
 	rows, err := stmtOut.Query(args...)
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
+	checkerr(err)
 	defer rows.Close()
 
 	columns, err := rows.Columns()
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
+	checkerr(err)
 
 	values := make([]sql.RawBytes, len(columns))
 	scanArgs := make([]interface{}, len(values))
@@ -88,10 +66,7 @@ func fetchRows(db *sql.DB, sqlstr string, args ...interface{}) (*[]map[string]st
 
 	for rows.Next() {
 		err = rows.Scan(scanArgs...)
-		if err != nil {
-			log.Println(err)
-			return nil, err
-		}
+		checkerr(err)
 		var value string
 		vmap := make(map[string]string, len(scanArgs))
 		for i, col := range values {

@@ -56,7 +56,7 @@ func main() {
 	db, err := sql.Open("mysql", dsn)
 	checkerr(err)
 	defer db.Close()
-	db.SetMaxOpenConns(100)
+	db.SetMaxOpenConns(500)
 
 	rows, err := db.Query("SELECT * FROM " + tableName + " LIMIT 1")
 	checkerr(err)
@@ -74,15 +74,15 @@ func main() {
 
 	c.paraseColumns()
 
-	ch := make(chan string)
+	ch := make(chan string, 10)
 	rowsnum := len(xlFile.Sheets[0].Rows)
 	step := int(math.Ceil(float64(rowsnum) / 10))
 	for j := 0; j < step; j++ {
 		for i := (j * 10) + 1; i < (j+1)*10+1; i++ {
-			if i > rowsnum {
+			if i >= rowsnum {
 				break
 			}
-			go func(c *columns, i int, db *sql.DB, ch chan string) {
+			go func(i int) {
 				r := &row{value: make(map[string]string), sql: "INSERT INTO `" + tableName + "` SET ", ot: otherTable{}}
 				tmp := 0
 				for key, value := range c.useColumns {
@@ -189,12 +189,18 @@ func main() {
 					defer otsmt.Close()
 					checkerr(err)
 				}
-				ch <- strconv.Itoa(i)
-			}(c, i, db, ch)
+				ch <- "success"
+			}(i)
 		}
-		if res := <-ch; res != "error" {
-			fmt.Println("[" + res + "/" + strconv.Itoa(rowsnum-1) + "]导入数据成功")
+		for i := (j * 10) + 1; i < (j+1)*10+1; i++ {
+			if i >= rowsnum {
+				break
+			}
+			if <-ch == "success" {
+				fmt.Println("[" + strconv.Itoa(i) + "/" + strconv.Itoa(rowsnum-1) + "]导入数据成功")
+			}
 		}
+
 	}
 
 }

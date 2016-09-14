@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
-	"math"
 	"os"
 	"runtime"
 	"strconv"
@@ -56,7 +55,8 @@ func main() {
 	db, err := sql.Open("mysql", dsn)
 	checkerr(err)
 	defer db.Close()
-	db.SetMaxOpenConns(500)
+	db.SetMaxOpenConns(100)
+	db.SetMaxIdleConns(100)
 
 	rows, err := db.Query("SELECT * FROM " + tableName + " LIMIT 1")
 	checkerr(err)
@@ -74,133 +74,118 @@ func main() {
 
 	c.paraseColumns()
 
-	ch := make(chan string, 10)
+	ch := make(chan int, 50)
 	rowsnum := len(xlFile.Sheets[0].Rows)
-	step := int(math.Ceil(float64(rowsnum) / 10))
-	for j := 0; j < step; j++ {
-		for i := (j * 10) + 1; i < (j+1)*10+1; i++ {
-			if i >= rowsnum {
-				break
-			}
-			go func(i int) {
-				r := &row{value: make(map[string]string), sql: "INSERT INTO `" + tableName + "` SET ", ot: otherTable{}}
-				tmp := 0
-				for key, value := range c.useColumns {
-					r.value[value[0]], _ = xlFile.Sheets[0].Rows[i].Cells[key].String()
+	for i := 1; i < rowsnum; i++ {
+		ch <- i
+		go func(i int) {
+			r := &row{value: make(map[string]string), sql: "INSERT INTO `" + tableName + "` SET ", ot: otherTable{}}
+			tmp := 0
+			for key, value := range c.useColumns {
+				r.value[value[0]], _ = xlFile.Sheets[0].Rows[i].Cells[key].String()
 
-					//解析内容
-					if value[0] == ":other" {
-						r.ot.value = strings.Split(r.value[value[0]], "|")
-						rows, err := db.Query("SELECT * FROM " + r.ot.value[0])
-						checkerr(err)
-						r.ot.columns, err = rows.Columns()
-						rows.Close()
-						checkerr(err)
-					} else {
-						if len(value) > 1 {
-							switch value[1] {
-							case "unique":
-								result, _ := fetchRow(db, "SELECT count("+value[0]+") as has FROM `"+tableName+"` WHERE `"+value[0]+"` = '"+r.value[value[0]]+"'")
-								has, _ := strconv.Atoi((*result)["has"])
-								if has > 0 {
-									fmt.Print(value[0] + ":" + r.value[value[0]] + "重复，自动跳过\n")
-									ch <- "error"
-									return
-								}
-							case "password":
-								tmpvalue := strings.Split(r.value[value[0]], "|")
-								if len(tmpvalue) == 2 {
-									if []byte(tmpvalue[1])[0] == ':' {
-										if _, ok := r.value[string([]byte(tmpvalue[1])[1:])]; ok {
-											r.value[value[0]] = tmpvalue[0] + r.value[string([]byte(tmpvalue[1])[1:])]
-										} else {
-											fmt.Print("密码盐" + string([]byte(tmpvalue[1])[1:]) + "字段不存在，自动跳过\n")
-											ch <- "error"
-											return
-										}
+				//解析内容
+				if value[0] == ":other" {
+					r.ot.value = strings.Split(r.value[value[0]], "|")
+					rows, err := db.Query("SELECT * FROM " + r.ot.value[0])
+					checkerr(err)
+					r.ot.columns, err = rows.Columns()
+					defer rows.Close()
+					checkerr(err)
+				} else {
+					if len(value) > 1 {
+						switch value[1] {
+						case "unique":
+							result, _ := fetchRow(db, "SELECT count("+value[0]+") as has FROM `"+tableName+"` WHERE `"+value[0]+"` = '"+r.value[value[0]]+"'")
+							has, _ := strconv.Atoi((*result)["has"])
+							if has > 0 {
+								fmt.Print(value[0] + ":" + r.value[value[0]] + "重复，自动跳过\n")
+								<-ch
+								return
+							}
+						case "password":
+							tmpvalue := strings.Split(r.value[value[0]], "|")
+							if len(tmpvalue) == 2 {
+								if []byte(tmpvalue[1])[0] == ':' {
+									if _, ok := r.value[string([]byte(tmpvalue[1])[1:])]; ok {
+										r.value[value[0]] = tmpvalue[0] + r.value[string([]byte(tmpvalue[1])[1:])]
 									} else {
-										r.value[value[0]] += tmpvalue[1]
+										fmt.Print("密码盐" + string([]byte(tmpvalue[1])[1:]) + "字段不存在，自动跳过\n")
+										<-ch
+										return
 									}
 								} else {
-									r.value[value[0]] = tmpvalue[0]
+									r.value[value[0]] += tmpvalue[1]
 								}
-								switch value[2] {
-								case "md5":
-									r.value[value[0]] = string(md5.New().Sum([]byte(r.value[value[0]])))
-								case "bcrypt":
-									pass, _ := bcrypt.GenerateFromPassword([]byte(r.value[value[0]]), 13)
-									r.value[value[0]] = string(pass)
-								}
-							case "find":
-								result, _ := fetchRow(db, "SELECT `"+value[3]+"` FROM `"+value[2]+"` WHERE "+value[4]+" = '"+r.value[value[0]]+"'")
-								if (*result)["id"] == "" {
-									fmt.Print("表 " + value[2] + " 中没有找到 " + value[4] + " 为 " + r.value[value[0]] + " 的数据，自动跳过\n")
-									ch <- "error"
-									return
-								}
-								r.value[value[0]] = (*result)["id"]
-
-							}
-						}
-						r.value[value[0]] = paraseValue(r.value[value[0]])
-
-						if r.value[value[0]] != "" {
-							if tmp == 0 {
-								r.sql += "`" + value[0] + "` = '" + r.value[value[0]] + "'"
 							} else {
-								r.sql += ", `" + value[0] + "` = '" + r.value[value[0]] + "'"
+								r.value[value[0]] = tmpvalue[0]
 							}
-							tmp++
-						}
-
-					}
-				}
-
-				smt, err := db.Prepare(r.sql + ";")
-				checkerr(err)
-
-				res, err := smt.Exec()
-				defer smt.Close()
-				r.insertID, _ = res.LastInsertId()
-				checkerr(err)
-
-				//执行附表操作
-				if r.ot.value != nil {
-					r.ot.sql = "INSERT INTO `" + r.ot.value[0] + "` SET "
-					tmp = 0
-					for key, value := range r.ot.columns {
-						r.ot.value[key+1] = paraseValue(r.ot.value[key+1])
-						if r.ot.value[key+1] == ":id" {
-							r.ot.value[key+1] = strconv.Itoa(int(r.insertID))
-						}
-						if r.ot.value[key+1] != "" {
-							if tmp == 0 {
-								r.ot.sql += "`" + value + "` = '" + r.ot.value[key+1] + "'"
-							} else {
-								r.ot.sql += ", `" + value + "` = '" + r.ot.value[key+1] + "'"
-
+							switch value[2] {
+							case "md5":
+								r.value[value[0]] = string(md5.New().Sum([]byte(r.value[value[0]])))
+							case "bcrypt":
+								pass, _ := bcrypt.GenerateFromPassword([]byte(r.value[value[0]]), 13)
+								r.value[value[0]] = string(pass)
 							}
-							tmp++
+						case "find":
+							result, _ := fetchRow(db, "SELECT `"+value[3]+"` FROM `"+value[2]+"` WHERE "+value[4]+" = '"+r.value[value[0]]+"'")
+							if (*result)["id"] == "" {
+								fmt.Print("表 " + value[2] + " 中没有找到 " + value[4] + " 为 " + r.value[value[0]] + " 的数据，自动跳过\n")
+								<-ch
+								return
+							}
+							r.value[value[0]] = (*result)["id"]
+
 						}
 					}
-					otsmt, err := db.Prepare(r.ot.sql + ";")
-					checkerr(err)
-					_, err = otsmt.Exec()
-					defer otsmt.Close()
-					checkerr(err)
-				}
-				ch <- "success"
-			}(i)
-		}
-		for i := (j * 10) + 1; i < (j+1)*10+1; i++ {
-			if i >= rowsnum {
-				break
-			}
-			if <-ch == "success" {
-				fmt.Println("[" + strconv.Itoa(i) + "/" + strconv.Itoa(rowsnum-1) + "]导入数据成功")
-			}
-		}
+					r.value[value[0]] = paraseValue(r.value[value[0]])
 
+					if r.value[value[0]] != "" {
+						if tmp == 0 {
+							r.sql += "`" + value[0] + "` = '" + r.value[value[0]] + "'"
+						} else {
+							r.sql += ", `" + value[0] + "` = '" + r.value[value[0]] + "'"
+						}
+						tmp++
+					}
+				}
+			}
+
+			smt, err := db.Prepare(r.sql + ";")
+			defer smt.Close()
+			checkerr(err)
+
+			res, err := smt.Exec()
+			r.insertID, _ = res.LastInsertId()
+			checkerr(err)
+
+			//执行附表操作
+			if r.ot.value != nil {
+				r.ot.sql = "INSERT INTO `" + r.ot.value[0] + "` SET "
+				tmp = 0
+				for key, value := range r.ot.columns {
+					r.ot.value[key+1] = paraseValue(r.ot.value[key+1])
+					if r.ot.value[key+1] == ":id" {
+						r.ot.value[key+1] = strconv.Itoa(int(r.insertID))
+					}
+					if r.ot.value[key+1] != "" {
+						if tmp == 0 {
+							r.ot.sql += "`" + value + "` = '" + r.ot.value[key+1] + "'"
+						} else {
+							r.ot.sql += ", `" + value + "` = '" + r.ot.value[key+1] + "'"
+
+						}
+						tmp++
+					}
+				}
+				otsmt, err := db.Prepare(r.ot.sql + ";")
+				defer otsmt.Close()
+				checkerr(err)
+				_, err = otsmt.Exec()
+				checkerr(err)
+			}
+			fmt.Println("[" + strconv.Itoa(<-ch) + "/" + strconv.Itoa(rowsnum-1) + "]导入数据成功")
+		}(i)
 	}
 
 }

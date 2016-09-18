@@ -75,6 +75,7 @@ func main() {
 	c.paraseColumns()
 
 	ch := make(chan int, 50)
+	sign := make(chan string)
 	rowsnum := len(xlFile.Sheets[0].Rows)
 	for i := 1; i < rowsnum; i++ {
 		ch <- i
@@ -102,8 +103,8 @@ func main() {
 							result, _ := fetchRow(db, "SELECT count("+value[0]+") as has FROM `"+tableName+"` WHERE `"+value[0]+"` = '"+r.value[value[0]]+"'")
 							has, _ := strconv.Atoi((*result)["has"])
 							if has > 0 {
-								fmt.Print(value[0] + ":" + r.value[value[0]] + "重复，自动跳过\n")
-								<-ch
+								fmt.Print("[" + strconv.Itoa(<-ch) + "/" + strconv.Itoa(rowsnum-1) + "]" + value[0] + ":" + r.value[value[0]] + "重复，自动跳过\n")
+								sign <- "error"
 								return
 							}
 						case "password":
@@ -113,8 +114,8 @@ func main() {
 									if _, ok := r.value[string([]byte(tmpvalue[1])[1:])]; ok {
 										r.value[value[0]] = tmpvalue[0] + r.value[string([]byte(tmpvalue[1])[1:])]
 									} else {
-										fmt.Print("密码盐" + string([]byte(tmpvalue[1])[1:]) + "字段不存在，自动跳过\n")
-										<-ch
+										fmt.Print("[" + strconv.Itoa(<-ch) + "/" + strconv.Itoa(rowsnum-1) + "]密码盐" + string([]byte(tmpvalue[1])[1:]) + "字段不存在，自动跳过\n")
+										sign <- "error"
 										return
 									}
 								} else {
@@ -133,8 +134,8 @@ func main() {
 						case "find":
 							result, _ := fetchRow(db, "SELECT `"+value[3]+"` FROM `"+value[2]+"` WHERE "+value[4]+" = '"+r.value[value[0]]+"'")
 							if (*result)["id"] == "" {
-								fmt.Print("表 " + value[2] + " 中没有找到 " + value[4] + " 为 " + r.value[value[0]] + " 的数据，自动跳过\n")
-								<-ch
+								fmt.Print("[" + strconv.Itoa(<-ch) + "/" + strconv.Itoa(rowsnum-1) + "]表 " + value[2] + " 中没有找到 " + value[4] + " 为 " + r.value[value[0]] + " 的数据，自动跳过\n")
+								sign <- "error"
 								return
 							}
 							r.value[value[0]] = (*result)["id"]
@@ -190,7 +191,11 @@ func main() {
 			err = tx.Commit()
 			checkerr(err)
 			fmt.Println("[" + strconv.Itoa(<-ch) + "/" + strconv.Itoa(rowsnum-1) + "]导入数据成功")
+			sign <- "success"
 		}(i)
+	}
+	for i := 1; i < rowsnum; i++ {
+		<-sign
 	}
 
 }

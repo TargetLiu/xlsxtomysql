@@ -79,6 +79,9 @@ func main() {
 	for i := 1; i < rowsnum; i++ {
 		ch <- i
 		go func(i int) {
+			tx, err := db.Begin()
+			defer tx.Rollback()
+			checkerr(err)
 			r := &row{value: make(map[string]string), sql: "INSERT INTO `" + tableName + "` SET ", ot: otherTable{}}
 			tmp := 0
 			for key, value := range c.useColumns {
@@ -90,7 +93,7 @@ func main() {
 					rows, err := db.Query("SELECT * FROM " + r.ot.value[0])
 					checkerr(err)
 					r.ot.columns, err = rows.Columns()
-					defer rows.Close()
+					rows.Close()
 					checkerr(err)
 				} else {
 					if len(value) > 1 {
@@ -151,13 +154,13 @@ func main() {
 				}
 			}
 
-			smt, err := db.Prepare(r.sql + ";")
-			defer smt.Close()
+			smt, err := tx.Prepare(r.sql + ";")
 			checkerr(err)
 
 			res, err := smt.Exec()
 			r.insertID, _ = res.LastInsertId()
 			checkerr(err)
+			smt.Close()
 
 			//执行附表操作
 			if r.ot.value != nil {
@@ -178,12 +181,14 @@ func main() {
 						tmp++
 					}
 				}
-				otsmt, err := db.Prepare(r.ot.sql + ";")
-				defer otsmt.Close()
+				otsmt, err := tx.Prepare(r.ot.sql + ";")
 				checkerr(err)
 				_, err = otsmt.Exec()
 				checkerr(err)
+				otsmt.Close()
 			}
+			err = tx.Commit()
+			checkerr(err)
 			fmt.Println("[" + strconv.Itoa(<-ch) + "/" + strconv.Itoa(rowsnum-1) + "]导入数据成功")
 		}(i)
 	}

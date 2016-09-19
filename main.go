@@ -75,7 +75,7 @@ func main() {
 	c.paraseColumns()
 
 	ch := make(chan int, 50)
-	sign := make(chan string)
+	sign := make(chan string, len(xlFile.Sheets[0].Rows))
 	rowsnum := len(xlFile.Sheets[0].Rows)
 	for i := 1; i < rowsnum; i++ {
 		ch <- i
